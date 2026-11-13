@@ -463,14 +463,6 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                 }
                 Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
-            // centro: transporte grande (estilo moderno)
-            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (live) CircleBtn("▲", false) { zap(false) }
-                else CircleBtn("⏪", false) { seek(-10_000); show() }
-                CircleBtn(if (playing) "⏸" else "▶", true, fr = playFocus) { toggle(); show() }
-                if (live) CircleBtn("▼", false) { zap(true) }
-                else CircleBtn("⏩", false) { seek(10_000); show() }
-            }
             // base: barra de tempo (filme) ou agora/depois (ao vivo) + chips secundários
             Column(
                 Modifier.align(Alignment.BottomStart).fillMaxWidth()
@@ -499,21 +491,29 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                     SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> player.seekTo(t.coerceIn(0, dur)); pos = t }
                     Spacer(Modifier.height(12.dp))
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    if (!more) {
-                        if (live) { TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { guide = true; chans = false }; Spacer(Modifier.width(8.dp)); TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { chans = true; guide = false }; Spacer(Modifier.width(8.dp)) }
-                        if (nSubs > 0) { TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleSub(); show() }; Spacer(Modifier.width(8.dp)) }
-                        if (nAudio > 1) { TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleAudio(); show() }; Spacer(Modifier.width(8.dp)) }
-                    } else {
-                        if (!live) {
-                            TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }; player.setPlaybackSpeed(speed); show() }; Spacer(Modifier.width(8.dp))
-                            if (st.next(req) != null) { TvButton("Próximo ⏭", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { zap(true) }; Spacer(Modifier.width(8.dp)) }
-                        }
-                        TvButton("⛶ Tela" + (if (resize != 0) ": " + (if (resize == 1) "Zoom" else "Esticar") else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { resize = (resize + 1) % 3; show() }; Spacer(Modifier.width(8.dp))
-                        TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { st.toggleFav(req.item.key) }; Spacer(Modifier.width(8.dp))
-                        TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { close() }; Spacer(Modifier.width(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    // transporte na parte de baixo: anterior · play · próximo (episódio) — ou ▲/▼ canal no ao vivo
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (live) CircleBtn("▲", false) { zap(false) }
+                        else if (st.prev(req) != null) CircleBtn("⏮", false) { zap(false) }
+                        CircleBtn(if (playing) "⏸" else "▶", true, fr = playFocus) { toggle(); show() }
+                        if (live) CircleBtn("▼", false) { zap(true) }
+                        else if (st.next(req) != null) CircleBtn("⏭", false) { zap(true) }
                     }
-                    TvButton(if (more) "⋯ Fechar" else "⋯ Mais", if (more) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { more = !more; show() }
+                    // chips secundários (o seek é só pela barra de tempo acima)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!more) {
+                            if (live) { TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { guide = true; chans = false }; Spacer(Modifier.width(8.dp)); TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { chans = true; guide = false }; Spacer(Modifier.width(8.dp)) }
+                            if (nSubs > 0) { TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleSub(); show() }; Spacer(Modifier.width(8.dp)) }
+                            if (nAudio > 1) { TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleAudio(); show() }; Spacer(Modifier.width(8.dp)) }
+                        } else {
+                            if (!live) { TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }; player.setPlaybackSpeed(speed); show() }; Spacer(Modifier.width(8.dp)) }
+                            TvButton("⛶ Tela" + (if (resize != 0) ": " + (if (resize == 1) "Zoom" else "Esticar") else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { resize = (resize + 1) % 3; show() }; Spacer(Modifier.width(8.dp))
+                            TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { st.toggleFav(req.item.key) }; Spacer(Modifier.width(8.dp))
+                            TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { close() }; Spacer(Modifier.width(8.dp))
+                        }
+                        TvButton(if (more) "⋯ Fechar" else "⋯ Mais", if (more) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { more = !more; show() }
+                    }
                 }
             }
         }
