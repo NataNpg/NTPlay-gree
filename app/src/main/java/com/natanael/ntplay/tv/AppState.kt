@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 
 class PlayReq(val item: Item, val ep: Ep, val resume: Long)
 
-val TABS = listOf("RECOMENDAÇÕES", "TV AO VIVO", "FUTEBOL", "FILMES", "SÉRIES", "ANIMES", "FAVORITOS")
+val TABS = listOf("INÍCIO", "TV AO VIVO", "FILMES", "SÉRIES", "FAVORITOS")
 
 class AppState(val ctx: Context) {
     val store = Store(ctx)
@@ -152,25 +152,9 @@ class AppState(val ctx: Context) {
                 } catch (e: Throwable) { }
             }
             scope.launch { delay(8000); try { Epg.load(store, l, true); epgVer++ } catch (e: Throwable) { } }
-            trendBusy = trend.isEmpty()
-            scope.launch {
-                try {
-                    trend = withContext(Dispatchers.IO) { Trending.load(ctx, l) }
-                    // pré-carrega capas dos primeiros itens para a tela inicial já abrir pronta (máx. ~6 s)
-                    kotlinx.coroutines.withTimeoutOrNull(2500) {
-                        val first = trend.flatMap { it.items.take(8) }.filter { it.kind != 'l' }.distinctBy { it.key }.take(24)
-                        withContext(Dispatchers.IO) {
-                            val sem = kotlinx.coroutines.sync.Semaphore(6)
-                            first.map { it0 -> scope.launch(Dispatchers.IO) { sem.acquire(); try {
-                                var img = it0.logo.ifEmpty { Meta.cached(store, it0)?.img ?: "" }
-                                if (img.isEmpty()) img = try { Meta.get(store, it0)?.img ?: "" } catch (e: Throwable) { "" }
-                                if (img.isNotEmpty()) coil.Coil.imageLoader(ctx).execute(coil.request.ImageRequest.Builder(ctx).data(img).build())
-                            } catch (e: Throwable) { } finally { sem.release() } } }.forEach { it1 -> it1.join() }
-                        }
-                    }
-                } catch (e: Throwable) { }
-                trendBusy = false
-            }
+            // NTPlay-gree: sem "recomendações automáticas" (TMDB/etc.). O Início usa só as suas listas,
+            // então o app abre mais leve e não busca nada em segundo plano para isso.
+            trendBusy = false
         } catch (e: Throwable) {
             status = "Erro ao ler a lista"
             toast("Erro ao ler a lista: " + Util.friendlyErr(e))
@@ -695,6 +679,9 @@ class AppState(val ctx: Context) {
     }
 
     fun logosLater() {
+        // NTPlay-gree: logos dos canais desligados (app mais leve, lista mais simples).
+        if (true) return
+        @Suppress("UNREACHABLE_CODE")
         val l = lib ?: return
         if (l.live.none { it.logo.isEmpty() }) return
         scope.launch {

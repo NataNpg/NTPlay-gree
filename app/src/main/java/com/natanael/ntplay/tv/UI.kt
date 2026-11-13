@@ -338,13 +338,15 @@ fun App(st: AppState) {
     }
     Box(Modifier.fillMaxSize().background(Bg)) {
         if (st.locked) LoginGate(st) else {
-        Column(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 30.dp)) {
-            Header(st)
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                val d = st.detail
-                if (d != null) DetailScreen(st, d) else Browse(st)
+        Row(Modifier.fillMaxSize().padding(vertical = 20.dp)) {
+            NavRail(st)
+            Column(Modifier.weight(1f).fillMaxHeight().padding(start = 6.dp, end = 40.dp, top = 8.dp, bottom = 4.dp)) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    val d = st.detail
+                    if (d != null) DetailScreen(st, d) else Browse(st)
+                }
+                Footer()
             }
-            Footer()
         }
         val p = st.play
         if (p != null) PlayerScreen(st, p)
@@ -414,6 +416,53 @@ fun Header(st: AppState) {
             if (exd != null) Text("Acesso vence " + (if (exd == 0) "hoje" else "em $exd dia" + (if (exd == 1) "" else "s")), color = Color(0xFFFFB454), fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(170.dp), textAlign = TextAlign.End)
             else Text(if (st.busy) st.status else st.status, color = Muted, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(170.dp), textAlign = TextAlign.End)
         }
+    }
+}
+
+fun railLabel(t: String) = when (t) { "INÍCIO" -> "Início"; "TV AO VIVO" -> "Ao vivo"; "FILMES" -> "Filmes"; "SÉRIES" -> "Séries"; "FAVORITOS" -> "Favoritos"; else -> t }
+
+@Composable
+fun NavBtn(st: AppState, label: String, onClick: () -> Unit) {
+    val fi = rememberFocus()
+    Row(
+        Modifier.fillMaxWidth().tvClick(fi, RoundedCornerShape(10.dp), 1.0f, border = false) { onClick() }
+            .background(if (fi.on) Color(0x22FFFFFF) else Color.Transparent, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) { Text(label, color = if (fi.on) Color.White else Color(0xB3FFFFFF), fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+}
+
+@Composable
+fun NavRail(st: AppState) {
+    val clock by produceState("") { while (true) { value = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()); delay(20000) } }
+    Column(Modifier.width(158.dp).fillMaxHeight().padding(start = 22.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)) {
+            Image(painterResource(R.drawable.logo), null, Modifier.size(26.dp).clip(RoundedCornerShape(7.dp)))
+            Spacer(Modifier.width(8.dp))
+            Text(androidx.compose.ui.text.buildAnnotatedString { append("NT"); pushStyle(androidx.compose.ui.text.SpanStyle(color = Pink)); append("·gree"); pop() }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        for (t in TABS) {
+            val fi = rememberFocus()
+            val sel = st.tab == t
+            Row(
+                Modifier.fillMaxWidth().tvClick(fi, RoundedCornerShape(11.dp), 1.0f, border = false) { st.selectTab(t) }
+                    .background(if (sel) FocusBg.copy(alpha = 0.55f) else if (fi.on) Color(0x22FFFFFF) else Color.Transparent, RoundedCornerShape(11.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.width(3.dp).height(15.dp).background(if (sel) Pink else Color.Transparent, RoundedCornerShape(2.dp)))
+                Spacer(Modifier.width(9.dp))
+                Text(railLabel(t), color = if (sel || fi.on) Color.White else Color(0xB3FFFFFF), fontSize = 12.5.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        NavBtn(st, "Buscar") { st.showSearch = true }
+        NavBtn(st, "Listas") { st.showLists = true }
+        Spacer(Modifier.weight(1f))
+        Text(clock, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        val exd = st.expiryDays()
+        if (exd != null) Text("Vence " + (if (exd == 0) "hoje" else "em ${exd}d"), color = Pink, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        else if (st.status.isNotEmpty()) Text(st.status, color = Muted, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text("NTPlay-gree " + BuildConfig.VERSION_NAME, color = Color(0x66FFFFFF), fontSize = 8.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
@@ -617,9 +666,6 @@ fun Browse(st: AppState) {
                         GridOf(st, l, st.group, "$sm|" + st.group)
                     }
                 } else when (tab) {
-                    "FUTEBOL" -> FutebolScreen(st, lib)
-                    "INFANTIL" -> GridOf(st, lib.kids.take(if (st.lite) 300 else 600), "Infantil")
-                    "ANIMES" -> AnimeScreen(st, lib)
                     "FAVORITOS" -> FavoritesScreen(st, lib)
                     else -> Recom(st, lib)
                 }
@@ -748,9 +794,13 @@ fun Recom(st: AppState, lib: Library) {
     val cw = remember(ver, lib) { st.continueList() }
     val favs = remember(st.favs, lib) { st.favs.mapNotNull { lib.byKey[it] } }
     val favL = favs.filter { it.kind == 'l' }; val favM = favs.filter { it.kind == 'm' }; val favS = favs.filter { it.kind == 's' }
-    val trend = remember(st.trend) { st.trend.map { Trending.Row(it.title, it.items.filter { x -> x.kind != 'l' }) }.filter { it.items.isNotEmpty() } }
+    // destaque (banner): o que você está vendo + alguns filmes/séries das SUAS listas — sem busca externa
+    val heroList = remember(cw, lib) {
+        (cw.map { it.first } + lib.movies.take(12) + lib.series.take(8)).filter { it.kind != 'l' }.distinctBy { it.key }.take(8)
+    }
     val ls = rememberLazyListState()
     LazyColumn(Modifier.fillMaxSize().mouseScroll(ls), state = ls, contentPadding = PaddingValues(bottom = 20.dp)) {
+        if (heroList.isNotEmpty()) item { HeroCarousel(st, heroList) }
         if (cw.isNotEmpty()) item {
             ShelfRow("Continuar assistindo", cw.size, null) {
                 items(cw, key = { it.first.key }) { (it2, ep) ->
@@ -762,13 +812,12 @@ fun Recom(st: AppState, lib: Library) {
                 }
             }
         }
-        for (r in trend) item { ShelfRow(r.title, r.items.size, null) { items(r.items.take(if (st.lite) 20 else 40), key = { it.key }) { it2 -> CardFor(st, it2, r.items) } } }
         if (favL.isNotEmpty()) item { ShelfRow("★ Canais favoritos", favL.size, null) { items(favL, key = { it.key }) { it2 -> CardFor(st, it2, favL) } } }
         if (favM.isNotEmpty()) item { ShelfRow("★ Filmes favoritos", favM.size, null) { items(favM, key = { it.key }) { it2 -> CardFor(st, it2, favM) } } }
         if (favS.isNotEmpty()) item { ShelfRow("★ Séries favoritas", favS.size, null) { items(favS, key = { it.key }) { it2 -> CardFor(st, it2, favS) } } }
-        if (favs.isEmpty()) item { Text("Dica: segure o botão OK (ou aperte Menu) em qualquer canal, filme ou série para adicionar aos favoritos.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
-        if (trend.isEmpty() && lib.movies.isNotEmpty()) item { ShelfRow("Filmes", lib.movies.size, { st.selectTab("FILMES") }) { items(lib.movies.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.movies) } } }
-        if (trend.isEmpty() && lib.series.isNotEmpty()) item { ShelfRow("Séries", lib.series.size, { st.selectTab("SÉRIES") }) { items(lib.series.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.series) } } }
+        if (lib.movies.isNotEmpty()) item { ShelfRow("Filmes", lib.movies.size, { st.selectTab("FILMES") }) { items(lib.movies.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.movies) } } }
+        if (lib.series.isNotEmpty()) item { ShelfRow("Séries", lib.series.size, { st.selectTab("SÉRIES") }) { items(lib.series.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.series) } } }
+        if (favs.isEmpty() && cw.isEmpty()) item { Text("Dica: segure o botão OK em qualquer canal, filme ou série para adicionar aos favoritos.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
     }
 }
 
@@ -791,10 +840,10 @@ fun Hero(st: AppState, item: Item, idx: Int = 0, total: Int = 1, onPrev: () -> U
     val poster = Meta.cachedPoster(st.store, item).ifEmpty { info?.img ?: "" }.ifEmpty { img }
     Box(Modifier.fillMaxWidth().height(230.dp).padding(horizontal = 16.dp, vertical = 8.dp).clip(RoundedCornerShape(12.dp)).background(tint(item.title))) {
         if (img.isNotEmpty()) AsyncImage(img, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }, contentScale = ContentScale.Crop)
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Bg, Color(0xCC070B1A), Color.Transparent))))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Bg, Color(0xCC070709), Color.Transparent))))
         Row(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                Text(if (item.kind == 's') "SÉRIE EM ALTA" else "FILME EM ALTA", color = Color(0xFF5B8CFF), fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp)
+                Text(if (item.kind == 's') "SÉRIE EM DESTAQUE" else "FILME EM DESTAQUE", color = Pink, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Text(showTitle(item), color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Light, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val meta = listOfNotNull(info?.y?.ifEmpty { null } ?: Util.yearOf(item.title).ifEmpty { null }, info?.r?.takeIf { it > 0 }?.let { "★ %.1f".format(it) }, item.group).joinToString("  •  ")
                 Text(meta, color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(vertical = 3.dp))
