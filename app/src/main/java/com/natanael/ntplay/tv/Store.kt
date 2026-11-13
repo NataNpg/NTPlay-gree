@@ -98,6 +98,11 @@ class Store(ctx: Context) {
         get() = sp.getInt("accentcolor", 0)
         set(v) { sp.edit().putInt("accentcolor", v).apply() }
 
+    // decodificação do vídeo: 0 = Auto, 1 = Hardware (padrão), 2 = Software
+    var decodeMode: Int
+        get() = sp.getInt("decodemode", 1)
+        set(v) { sp.edit().putInt("decodemode", v).apply() }
+
     // decodifica nomes/categorias Xtream em Base64 (só quando o provedor os guarda assim)
     var base64: Boolean
         get() = sp.getBoolean("b64names", false)

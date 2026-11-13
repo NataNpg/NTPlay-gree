@@ -125,6 +125,7 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     var chans by remember(req.ep.url) { mutableStateOf(false) }
     var resize by remember { mutableIntStateOf(0) } // 0 = ajustar, 1 = esticar
     var more by remember(req.ep.url) { mutableStateOf(false) } // "⋯ Mais": controles secundários
+    var decode by remember { mutableIntStateOf(st.store.decodeMode) } // 0 Auto, 1 HW, 2 SW
     val overlay = guide || chans
     var nSubs by remember(req.ep.url) { mutableIntStateOf(0) }
     var nAudio by remember(req.ep.url) { mutableIntStateOf(0) }
@@ -147,7 +148,12 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     fun load(u: String, atMs: Long) {
         try {
             val m = Media(libVlc, Uri.parse(u))
-            m.setHWDecoderEnabled(true, false) // HW com fallback para SW (4K/HEVC entra quando o aparelho aguenta)
+            // decodificação escolhida pelo usuário (padrão Hardware, para o 4K/H.265 abrir no box)
+            when (st.store.decodeMode) {
+                2 -> m.setHWDecoderEnabled(false, false)     // Software
+                1 -> m.setHWDecoderEnabled(true, true)       // Hardware forçado (não cai pro SW que trava no 4K)
+                else -> m.setHWDecoderEnabled(true, false)   // Auto (HW com fallback)
+            }
             m.addOption(":network-caching=" + (if (live) 3000 else 1500))
             m.addOption(":http-reconnect")
             m.addOption(":http-user-agent=" + Util.UA)
@@ -436,6 +442,11 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                             TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { chans = true; guide = false; more = false }
                         }
                         TvButton("⛶ Tela" + (if (resize == 1) ": Esticar" else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { resize = (resize + 1) % 2; show() }
+                        TvButton("Vídeo: " + when (decode) { 1 -> "HW"; 2 -> "SW"; else -> "Auto" }, if (decode != 1) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) {
+                            decode = (decode + 1) % 3; st.store.decodeMode = decode
+                            st.toast("Decodificação: " + when (decode) { 1 -> "Hardware"; 2 -> "Software"; else -> "Automática" } + " — recarregando…")
+                            load(url, if (live) 0L else mp.time); show()
+                        }
                         if (nSubs > 0) TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleSub(); show() }
                         if (nAudio > 1) TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleAudio(); show() }
                         TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { st.toggleFav(req.item.key) }
