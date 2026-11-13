@@ -245,12 +245,9 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                 }
                 MediaPlayer.Event.Paused -> main.post { playing = false }
                 MediaPlayer.Event.Vout -> main.post {
+                    // NÃO trocar o modo HDMI aqui: com o motor VLC isso apagava o vídeo do 4K (ficava só áudio).
+                    // A TV cuida da saída; o vídeo renderiza normal.
                     quality = qualityOf(mp)
-                    val t = try { mp.currentVideoTrack } catch (e: Throwable) { null }
-                    if (t != null && t.width > 0 && t.height > 0) {
-                        val fps = if (t.frameRateDen > 0) t.frameRateNum.toFloat() / t.frameRateDen else 0f
-                        setDisplayModeFor(ctx, t.width, t.height, fps)
-                    }
                 }
                 MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESDeleted -> main.post {
                     nSubs = spuTracks().size
