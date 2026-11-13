@@ -794,13 +794,8 @@ fun Recom(st: AppState, lib: Library) {
     val cw = remember(ver, lib) { st.continueList() }
     val favs = remember(st.favs, lib) { st.favs.mapNotNull { lib.byKey[it] } }
     val favL = favs.filter { it.kind == 'l' }; val favM = favs.filter { it.kind == 'm' }; val favS = favs.filter { it.kind == 's' }
-    // destaque (banner): só séries das SUAS listas (sem filmes, sem busca externa)
-    val heroList = remember(cw, lib) {
-        (cw.map { it.first } + lib.series).filter { it.kind == 's' }.distinctBy { it.key }.take(8)
-    }
     val ls = rememberLazyListState()
     LazyColumn(Modifier.fillMaxSize().mouseScroll(ls), state = ls, contentPadding = PaddingValues(bottom = 20.dp)) {
-        if (heroList.isNotEmpty()) item { HeroCarousel(st, heroList) }
         if (cw.isNotEmpty()) item {
             ShelfRow("Continuar assistindo", cw.size, null) {
                 items(cw, key = { it.first.key }) { (it2, ep) ->
