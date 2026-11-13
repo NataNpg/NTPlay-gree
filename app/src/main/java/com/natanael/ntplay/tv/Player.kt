@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -127,6 +128,20 @@ private fun qualityOf(p: ExoPlayer): String {
 
 private val PB = Color(0xFF1E1E26) // botões do player (cinza-escuro neutro; o destaque fica na cor do tema)
 
+/** botão redondo do transporte central (play grande na cor do tema; laterais translúcidos) */
+@Composable
+private fun CircleBtn(label: String, big: Boolean, fr: FocusRequester? = null, onClick: () -> Unit) {
+    val fi = rememberFocus()
+    val base = if (big) Pink else if (fi.on) Color(0x55FFFFFF) else Color(0x24FFFFFF)
+    Box(
+        Modifier.size(if (big) 66.dp else 46.dp)
+            .then(if (fr != null) Modifier.focusRequester(fr) else Modifier)
+            .tvClick(fi, CircleShape, 1.1f, border = false) { onClick() }
+            .background(base, CircleShape),
+        contentAlignment = Alignment.Center
+    ) { Text(label, color = if (big) Color(0xFF140F05) else Color.White, fontSize = if (big) 24.sp else 17.sp, fontWeight = FontWeight.Bold) }
+}
+
 private fun hhmm(ms: Long): String = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
 private fun langName(l: String?): String = when (l?.lowercase()?.take(2)) {
@@ -160,6 +175,7 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     var guide by remember(req.ep.url) { mutableStateOf(false) }
     var chans by remember(req.ep.url) { mutableStateOf(false) }
     var resize by remember { mutableIntStateOf(0) }
+    var more by remember(req.ep.url) { mutableStateOf(false) } // "⋯ Mais": controles secundários
     val overlay = guide || chans
     var nSubs by remember(req.ep.url) { mutableIntStateOf(0) }
     var nAudio by remember(req.ep.url) { mutableIntStateOf(0) }
@@ -430,71 +446,75 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
         }
 
         if (ui) {
-            // topo: título, qualidade, relógio + guia (ao vivo)
-            Column(
-                Modifier.align(Alignment.TopStart).fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xF2000000), Color(0xB3000000), Color.Transparent))).padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 16.dp)
+            // topo: título + relógio (limpo)
+            Row(
+                Modifier.align(Alignment.TopStart).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent)))
+                    .padding(start = 44.dp, end = 44.dp, top = 22.dp, bottom = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-              Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (live) { LiveBadge(Modifier); Spacer(Modifier.width(10.dp)) }
                         Text(showTitle(req.item), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     val sub = listOfNotNull(if (req.item.kind == 's') "T${req.ep.s} E${req.ep.e}" else null, quality.ifEmpty { null }).joinToString(" · ")
-                    if (sub.isNotEmpty()) Text((if (live) "· " else "— ") + sub, color = Color(0xFFB8B8E8), fontSize = 12.sp)
+                    if (sub.isNotEmpty()) Text(sub, color = Color(0xFFB8B8E8), fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
                 }
                 Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-              }
-              if (live && (epgNow != null || epgNext != null)) {
-                Spacer(Modifier.height(8.dp))
-                epgNow?.let { pr ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Agora", color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.width(10.dp))
-                        if (pr.start > 0) Text(hhmm(pr.start) + "–" + hhmm(pr.stop) + " ·", color = Color.White, fontSize = 12.sp)
-                        Spacer(Modifier.width(6.dp))
-                        Text(pr.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    }
-                    if (pr.stop > pr.start) {
-                        val prog = ((System.currentTimeMillis() - pr.start).toFloat() / (pr.stop - pr.start)).coerceIn(0f, 1f)
-                        Box(Modifier.padding(top = 3.dp).fillMaxWidth(0.55f).height(3.dp).background(Color(0x44FFFFFF), RoundedCornerShape(2.dp))) {
-                            Box(Modifier.fillMaxWidth(prog).fillMaxHeight().background(Pink, RoundedCornerShape(2.dp)))
-                        }
-                    }
-                }
-                epgNext?.let { pr -> Row(Modifier.padding(top = 4.dp)) { Text("A seguir", color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.width(10.dp)); Text((if (pr.start > 0) hhmm(pr.start) + " · " else "") + pr.title, color = Color(0xDDFFFFFF), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
-              }
             }
-            // base: progresso + botões compactos
+            // centro: transporte grande (estilo moderno)
+            Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (live) CircleBtn("▲", false) { zap(false) }
+                else CircleBtn("⏪", false) { seek(-10_000); show() }
+                CircleBtn(if (playing) "⏸" else "▶", true, fr = playFocus) { toggle(); show() }
+                if (live) CircleBtn("▼", false) { zap(true) }
+                else CircleBtn("⏩", false) { seek(10_000); show() }
+            }
+            // base: barra de tempo (filme) ou agora/depois (ao vivo) + chips secundários
             Column(
-                Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000), Color(0xFF000000)))).padding(start = 40.dp, end = 40.dp, top = 30.dp, bottom = 22.dp)
+                Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000), Color(0xF2000000))))
+                    .padding(start = 44.dp, end = 44.dp, top = 34.dp, bottom = 24.dp)
             ) {
-                if (!live && dur > 0) SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> player.seekTo(t.coerceIn(0, dur)); pos = t }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (live) TvButton("▲ Canal", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(false) }
-                    else TvButton("⏪ 10s", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { seek(-10_000); show() }
-                    TvButton(if (playing) "⏯" else "▶", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp), modifier = Modifier.focusRequester(playFocus)) { toggle(); show() }
-                    if (live) TvButton("▼ Canal", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(true) }
-                    else {
-                        TvButton("10s ⏩", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { seek(10_000); show() }
-                        TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) {
-                            speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }
-                            player.setPlaybackSpeed(speed); show()
+                if (live) {
+                    epgNow?.let { pr ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("AGORA", color = Pink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(10.dp))
+                            if (pr.start > 0) Text(hhmm(pr.start) + "–" + hhmm(pr.stop), color = Color(0xCCFFFFFF), fontSize = 11.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(pr.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         }
-                        if (st.next(req) != null) TvButton("Próximo ⏭", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(true) }
+                        if (pr.stop > pr.start) {
+                            val prog = ((System.currentTimeMillis() - pr.start).toFloat() / (pr.stop - pr.start)).coerceIn(0f, 1f)
+                            Box(Modifier.padding(top = 5.dp).fillMaxWidth(0.5f).height(4.dp).background(Color(0x40FFFFFF), RoundedCornerShape(3.dp))) {
+                                Box(Modifier.fillMaxWidth(prog).fillMaxHeight().background(Pink, RoundedCornerShape(3.dp)))
+                            }
+                        }
                     }
-                    if (live) {
-                        TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { guide = true; chans = false }
-                        TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { chans = true; guide = false }
-                    }
-                    TvButton("⛶ Tela" + (if (resize != 0) ": " + (if (resize == 1) "Zoom" else "Esticar") else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { resize = (resize + 1) % 3; show() }
-                    if (nSubs > 0) TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleSub(); show() }
-                    if (nAudio > 1) TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleAudio(); show() }
-                    TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { st.toggleFav(req.item.key) }
-                    TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { close() }
+                    epgNext?.let { pr -> Row(Modifier.padding(top = 5.dp)) { Text("A SEGUIR", color = Pink, fontSize = 10.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.width(8.dp)); Text((if (pr.start > 0) hhmm(pr.start) + " · " else "") + pr.title, color = Color(0xCCFFFFFF), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+                    Spacer(Modifier.height(12.dp))
+                } else if (dur > 0) {
+                    SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> player.seekTo(t.coerceIn(0, dur)); pos = t }
+                    Spacer(Modifier.height(12.dp))
                 }
-                if (live) Text("Dica: ▲/▼ no controle troca de canal com o painel fechado", color = Color(0x99FFFFFF), fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    if (!more) {
+                        if (live) { TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { guide = true; chans = false }; Spacer(Modifier.width(8.dp)); TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { chans = true; guide = false }; Spacer(Modifier.width(8.dp)) }
+                        if (nSubs > 0) { TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleSub(); show() }; Spacer(Modifier.width(8.dp)) }
+                        if (nAudio > 1) { TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleAudio(); show() }; Spacer(Modifier.width(8.dp)) }
+                    } else {
+                        if (!live) {
+                            TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }; player.setPlaybackSpeed(speed); show() }; Spacer(Modifier.width(8.dp))
+                            if (st.next(req) != null) { TvButton("Próximo ⏭", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { zap(true) }; Spacer(Modifier.width(8.dp)) }
+                        }
+                        TvButton("⛶ Tela" + (if (resize != 0) ": " + (if (resize == 1) "Zoom" else "Esticar") else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { resize = (resize + 1) % 3; show() }; Spacer(Modifier.width(8.dp))
+                        TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { st.toggleFav(req.item.key) }; Spacer(Modifier.width(8.dp))
+                        TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { close() }; Spacer(Modifier.width(8.dp))
+                    }
+                    TvButton(if (more) "⋯ Fechar" else "⋯ Mais", if (more) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { more = !more; show() }
+                }
             }
         }
 
