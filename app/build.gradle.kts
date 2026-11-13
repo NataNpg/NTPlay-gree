@@ -20,24 +20,19 @@ android {
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
     signingConfigs {
-        create("ntplay") {
-            // chave FIXA e SECRETA (vem dos GitHub Secrets na compilação). Sem ela, cada build teria assinatura diferente
-            // e o Android recusaria a atualização por cima.
-            val ks = System.getenv("NT_KS_FILE")
-            if (ks != null && file(ks).exists()) {
-                storeFile = file(ks)
-                storePassword = System.getenv("NT_KS_PASS")
-                keyAlias = "ntplay"
-                keyPassword = System.getenv("NT_KS_PASS")
-            }
+        create("ntgree") {
+            // chave FIXA no repositório: toda compilação assina igual, então o app ATUALIZA por cima
+            // sem "conflito". (App pessoal de IPTV; a chave é pública de propósito para simplificar o update.)
+            storeFile = rootProject.file("signing/ntgree.jks")
+            storePassword = "ntplaygree2026"
+            keyAlias = "ntgree"
+            keyPassword = "ntplaygree2026"
         }
     }
     buildTypes {
         release {
             isMinifyEnabled = false
-            // com chave própria (NT_KS_FILE nos Secrets) assina fixo; sem ela cai na chave debug e
-            // compila na mesma — bom para gerar o APK logo. Para atualizar por cima depois, use chave fixa.
-            signingConfig = if (System.getenv("NT_KS_FILE") != null) signingConfigs.getByName("ntplay") else signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("ntgree")
         }
     }
     compileOptions {
