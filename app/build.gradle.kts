@@ -53,9 +53,13 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.core:core-ktx:1.13.1")
-    // Motor de vídeo: libVLC. Roda IPTV (TS/HLS, canais em pedaços, AC3/EAC3/DTS, HEVC/4K) sem os
-    // problemas de codec do ExoPlayer, e traz os decodificadores nativos dentro do próprio app.
-    implementation("org.videolan.android:libvlc-all:3.6.0")
+    // Motor de vídeo: ExoPlayer (Media3) + decodificador FFmpeg — o mesmo do NTPlay, que roda
+    // o 4K/H.265 e o 1080 cheio no aparelho. O FFmpeg entra como fallback de software quando o box precisa.
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.3.1")
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.3.1+2")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.6.0")

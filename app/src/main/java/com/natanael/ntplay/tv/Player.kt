@@ -10,8 +10,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.net.Uri
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
@@ -64,21 +62,49 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.VideoSize
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.util.VLCVideoLayout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** qualidade real do vídeo (resolução · fps) a partir da faixa de vídeo atual do VLC */
-private fun qualityOf(mp: MediaPlayer): String {
-    val t = try { mp.currentVideoTrack } catch (e: Throwable) { null } ?: return ""
-    val h = minOf(t.width, t.height).let { if (it <= 0) t.height else it }
+/** vídeo com várias resoluções (HLS): fixa a melhor que o aparelho aceita, em vez de começar pela mais baixa */
+private fun pinBestVideo(p: ExoPlayer) {
+    try {
+        if (p.trackSelectionParameters.overrides.keys.any { it.type == C.TRACK_TYPE_VIDEO }) return
+        val g = p.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO } ?: return
+        if (g.length < 2) return
+        var best = -1; var bh = -1; var bb = -1
+        for (i in 0 until g.length) {
+            if (!g.isTrackSupported(i)) continue
+            val f = g.getTrackFormat(i)
+            if (f.height > bh || (f.height == bh && f.bitrate > bb)) { best = i; bh = f.height; bb = f.bitrate }
+        }
+        if (best >= 0) p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, best)).build()
+    } catch (e: Throwable) { }
+}
+
+private fun qualityOf(p: ExoPlayer): String {
+    val f = p.videoFormat ?: return ""
+    val h = minOf(f.height, f.width).let { if (it <= 0) f.height else it }
     val res = when {
         h >= 1600 -> "4K"
         h >= 1000 -> "Full HD 1080p"
@@ -86,29 +112,39 @@ private fun qualityOf(mp: MediaPlayer): String {
         h > 0 -> "SD ${h}p"
         else -> ""
     }
-    val fps = if (t.frameRateDen > 0) (t.frameRateNum.toFloat() / t.frameRateDen).roundToInt().let { if (it > 0) "$it fps" else "" } else ""
-    return listOf(res, fps).filter { it.isNotEmpty() }.joinToString(" · ")
+    val m = f.sampleMimeType ?: ""
+    val c = when {
+        m.contains("hevc") -> "H.265"
+        m.contains("avc") -> "H.264"
+        m.contains("av01") -> "AV1"
+        m.contains("vp9") -> "VP9"
+        m.contains("mpeg2") -> "MPEG-2"
+        else -> ""
+    }
+    val fps = if (f.frameRate > 0) "${f.frameRate.roundToInt()} fps" else ""
+    return listOf(res, c, fps).filter { it.isNotEmpty() }.joinToString(" · ")
 }
 
 private val PB = Color(0xFF1E1E26) // botões do player (cinza-escuro neutro; o destaque fica na cor do tema)
 
 private fun hhmm(ms: Long): String = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
-/** nome amigável da faixa (o VLC já devolve algo legível em TrackDescription.name) */
-private fun trackName(name: String?, idx: Int): String {
-    val n = name?.trim().orEmpty()
-    return if (n.isEmpty() || n.equals("Disable", true)) "Faixa $idx" else n
+private fun langName(l: String?): String = when (l?.lowercase()?.take(2)) {
+    null, "", "un" -> "Faixa"
+    "pt" -> "Português"; "en" -> "Inglês"; "es" -> "Espanhol"; "ja" -> "Japonês"; "ko" -> "Coreano"
+    "fr" -> "Francês"; "de" -> "Alemão"; "it" -> "Italiano"
+    else -> l.uppercase()
 }
 
 @Composable
 fun PlayerScreen(st: AppState, req: PlayReq) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val main = remember { Handler(Looper.getMainLooper()) }
     val live = req.item.kind == 'l'
     var url by remember(req.ep.url) { mutableStateOf(req.ep.url) }
     var err by remember(req.ep.url) { mutableStateOf("") }
     var retries by remember(req.ep.url) { mutableIntStateOf(0) }
+    var lastErr by remember(req.ep.url) { mutableStateOf("") }
     var ui by remember(req.ep.url) { mutableStateOf(true) }
     var lastAct by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var buffering by remember(req.ep.url) { mutableStateOf(true) }
@@ -123,51 +159,49 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     var epgNext by remember(req.ep.url) { mutableStateOf<Fut.Prog2?>(null) }
     var guide by remember(req.ep.url) { mutableStateOf(false) }
     var chans by remember(req.ep.url) { mutableStateOf(false) }
-    var resize by remember { mutableIntStateOf(0) } // 0 = ajustar, 1 = esticar
-    var more by remember(req.ep.url) { mutableStateOf(false) } // "⋯ Mais": controles secundários
-    var decode by remember { mutableIntStateOf(st.store.decodeMode) } // 0 Auto, 1 HW, 2 SW
+    var resize by remember { mutableIntStateOf(0) }
     val overlay = guide || chans
     var nSubs by remember(req.ep.url) { mutableIntStateOf(0) }
     var nAudio by remember(req.ep.url) { mutableIntStateOf(0) }
-    var layoutW by remember { mutableIntStateOf(0) }
-    var layoutH by remember { mutableIntStateOf(0) }
     val rootFocus = remember { FocusRequester() }
     val playFocus = remember { FocusRequester() }
 
-    // LibVLC vive enquanto a tela do player existe; a view de vídeo também (uma só)
-    val libVlc = remember {
-        LibVLC(ctx, arrayListOf("--http-reconnect", "--no-sub-autodetect-file", "--audio-time-stretch"))
+    val hlsForce = remember(req.ep.url) { booleanArrayOf(false) } // endereço sem .m3u8 que na verdade é HLS
+    val player = remember(req.ep.url) {
+        val okF = OkHttpDataSource.Factory(Net.client).setUserAgent(Util.UA)
+        val ds: androidx.media3.datasource.DataSource.Factory = if (live) androidx.media3.datasource.DataSource.Factory { LiveLoopDataSource(okF.createDataSource(), req.ep.url) { hlsForce[0] } } else okF
+        val ex = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
+        val rf = DefaultRenderersFactory(ctx).setEnableDecoderFallback(true).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        // buffer: filmes/séries seguem a preferência (Padrão / Grande / Muito grande); ao vivo fixo
+        val minV = when (st.store.bufferMode) { 1 -> 25_000; 2 -> 45_000; else -> 15_000 }
+        val maxV = when (st.store.bufferMode) { 1 -> 60_000; 2 -> 90_000; else -> 50_000 }
+        val lc = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(if (live) 20_000 else minV, if (live) 60_000 else maxV, 1_500, if (live) 4_000 else 5_000)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+        val p = ExoPlayer.Builder(ctx, rf).setLoadControl(lc).setMediaSourceFactory(DefaultMediaSourceFactory(ctx, ex).setDataSourceFactory(ds)).build()
+        // sempre a melhor qualidade: nunca reduz resolução/bitrate e aceita 4K/UHD quando o canal entrega
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setPreferredAudioLanguage("pt")
+            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).setMaxVideoBitrate(Int.MAX_VALUE).setForceHighestSupportedBitrate(true)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !st.subs).apply { if (st.subs) setPreferredTextLanguage("pt") }.build()
+        p
     }
-    val videoLayout = remember { VLCVideoLayout(ctx) }
-    DisposableEffect(Unit) { onDispose { try { libVlc.release() } catch (e: Throwable) {} } }
 
-    // um MediaPlayer por endereço (ao trocar de canal/episódio o endereço muda e recria)
-    val mp = remember(req.ep.url) { MediaPlayer(libVlc) }
-    val subInit = remember(req.ep.url) { booleanArrayOf(false) } // já aplicou a preferência de legenda uma vez?
-
-    fun load(u: String, atMs: Long) {
-        try {
-            val m = Media(libVlc, Uri.parse(u))
-            // decodificação escolhida pelo usuário (padrão Hardware, para o 4K/H.265 abrir no box)
-            when (st.store.decodeMode) {
-                2 -> m.setHWDecoderEnabled(false, false)     // Software
-                1 -> m.setHWDecoderEnabled(true, true)       // Hardware forçado (não cai pro SW que trava no 4K)
-                else -> m.setHWDecoderEnabled(true, false)   // Auto (HW com fallback)
-            }
-            m.addOption(":network-caching=" + (if (live) 3000 else 1500))
-            m.addOption(":http-reconnect")
-            m.addOption(":http-user-agent=" + Util.UA)
-            if (!live && atMs > 0) m.addOption(":start-time=" + (atMs / 1000))
-            mp.media = m
-            m.release()
-            mp.play()
-        } catch (e: Throwable) {
-            err = "Não foi possível iniciar o vídeo (" + (e.message ?: "erro") + ")."
-        }
+    fun load(u: String, at: Long) {
+        val mi = MediaItem.Builder().setUri(u).apply { if (hlsForce[0] || u.lowercase().contains(".m3u8")) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+        player.setMediaItem(mi, at)
+        player.playWhenReady = true
+        player.prepare()
     }
 
     DisposableEffect(Unit) { Meta.paused = true; onDispose { Meta.paused = false } }
-
+    LaunchedEffect(player) {
+        if (!live) delay(700) // deixa a conexão do vídeo anterior fechar (servidor de 1 tela responde 429 se ainda estiver aberta)
+        load(url, if (req.resume > 0) req.resume else 0L)
+    }
     LaunchedEffect(req.ep.url, st.epgVer) {
         if (!live) { epgNow = null; epgNext = null; return@LaunchedEffect }
         while (true) {
@@ -180,33 +214,36 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     }
 
     fun show() { ui = true; lastAct = System.currentTimeMillis() }
-    fun close() { st.saveProg(req, mp.time, mp.length.coerceAtLeast(0)); st.closePlayer() }
-    fun seek(d: Long) { if (!live) { val t = (mp.time + d).coerceIn(0, if (dur > 0) dur else Long.MAX_VALUE); mp.time = t; pos = t } }
-    fun toggle() { if (mp.isPlaying) mp.pause() else mp.play() }
+    fun close() { st.saveProg(req, player.currentPosition, player.duration.coerceAtLeast(0)); st.closePlayer() }
+    fun seek(d: Long) { if (!live) player.seekTo((player.currentPosition + d).coerceAtLeast(0)) }
+    fun toggle() { if (player.isPlaying) player.pause() else player.play() }
     fun zap(next: Boolean) { val n = if (next) st.next(req) else st.prev(req); if (n != null) st.play = n }
 
-    fun audioTracks() = (try { mp.audioTracks } catch (e: Throwable) { null })?.filter { it.id >= 0 } ?: emptyList()
-    fun spuTracks() = (try { mp.spuTracks } catch (e: Throwable) { null })?.filter { it.id >= 0 } ?: emptyList()
+    fun groups(type: Int) = player.currentTracks.groups.filter { it.type == type && it.isSupported }
     fun cycleSub() {
-        val g = spuTracks()
+        val g = groups(C.TRACK_TYPE_TEXT)
         if (g.isEmpty()) {
             st.toast("Sem legenda separada neste conteúdo. Se a legenda está \"gravada\" na imagem ([LEG]), escolha a versão dublada do canal/filme.")
             return
         }
-        val curId = try { mp.spuTrack } catch (e: Throwable) { -1 }
-        val cur = g.indexOfFirst { it.id == curId }
+        val cur = g.indexOfFirst { it.isSelected }
         val next = cur + 1
-        if (next >= g.size) { mp.setSpuTrack(-1); subLabel = "Desligada" }
-        else { mp.setSpuTrack(g[next].id); subLabel = trackName(g[next].name, next + 1) }
+        val b = player.trackSelectionParameters.buildUpon()
+        if (next >= g.size) {
+            b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).clearOverridesOfType(C.TRACK_TYPE_TEXT); subLabel = "Desligada"
+        } else {
+            b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setOverrideForType(TrackSelectionOverride(g[next].mediaTrackGroup, 0))
+            subLabel = langName(g[next].getTrackFormat(0).language)
+        }
+        player.trackSelectionParameters = b.build()
     }
     fun cycleAudio() {
-        val g = audioTracks()
+        val g = groups(C.TRACK_TYPE_AUDIO)
         if (g.size < 2) { st.toast("Só existe um áudio neste conteúdo."); return }
-        val curId = try { mp.audioTrack } catch (e: Throwable) { -1 }
-        val cur = g.indexOfFirst { it.id == curId }
+        val cur = g.indexOfFirst { it.isSelected }
         val next = (cur + 1) % g.size
-        mp.setAudioTrack(g[next].id)
-        audioLabel = trackName(g[next].name, next + 1)
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setOverrideForType(TrackSelectionOverride(g[next].mediaTrackGroup, 0)).build()
+        audioLabel = langName(g[next].getTrackFormat(0).language)
     }
 
     val skipIntroSec = st.store.skipIntro
@@ -216,6 +253,7 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     val nextReq = remember(req.ep.url) { if (live) null else st.next(req) }
     val creditsAt = if (dur > 0) maxOf(dur - (if (req.item.kind == 's') 90_000L else 6 * 60_000L), (dur * 0.93).toLong()) else Long.MAX_VALUE
     val showSkipCredits = !live && err.isEmpty() && dur > 6 * 60_000 && pos >= creditsAt && pos < dur - 3_000
+    // aviso flutuante aparece por 5 s quando entra na abertura / créditos
     var introAt by remember(req.ep.url) { mutableLongStateOf(0L) }
     var creditsAt2 by remember(req.ep.url) { mutableLongStateOf(0L) }
     LaunchedEffect(showSkipIntro) { if (showSkipIntro) introAt = System.currentTimeMillis() }
@@ -225,10 +263,11 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     val floatCredits = showSkipCredits && creditsAt2 > 0 && nowMs - creditsAt2 < 5_000
 
     fun skipIntro() {
-        val at = mp.time
+        val at = player.currentPosition
         val to = if (introMemo != null && at < introMemo.second) introMemo.second else at + skipIntroSec * 1000L
+        // primeira vez nesta série: memoriza onde a abertura começa e termina para os próximos episódios
         if (req.item.kind == 's' && introMemo == null) st.store.setIntroMem(req.item.key, at, to)
-        mp.time = to; pos = to
+        player.seekTo(to)
     }
     fun skipCredits() {
         if (nextReq != null) { st.markDone(req); st.play = nextReq }
@@ -237,88 +276,98 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
 
     BackHandler(true) { if (guide) guide = false else if (chans) chans = false else if (ui && err.isEmpty() && playing) ui = false else close() }
 
-    // motor VLC: anexa a view, ouve os eventos, carrega e solta ao sair
-    DisposableEffect(mp) {
-        try { mp.attachViews(videoLayout, null, true, false) } catch (e: Throwable) {}
-        val listener = MediaPlayer.EventListener { ev ->
-            when (ev.type) {
-                MediaPlayer.Event.Buffering -> main.post { buffering = ev.buffering < 100f; if (ev.buffering >= 100f && err.isEmpty()) { retries = 0 } }
-                MediaPlayer.Event.Playing -> main.post {
-                    playing = true; buffering = false; retries = 0
-                    quality = qualityOf(mp)
-                    if (!subInit[0]) { subInit[0] = true; if (!st.subs) try { mp.setSpuTrack(-1) } catch (e: Throwable) {} }
-                    mp.setRate(speed)
+    DisposableEffect(player) {
+        val l = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_READY) { retries = 0; quality = qualityOf(player) }
+                if (state == Player.STATE_ENDED) { if (live) { player.seekToDefaultPosition(); player.prepare() } else st.onEnded(req) }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+
+            override fun onVideoSizeChanged(vs: VideoSize) {
+                if (vs.width > 0 && vs.height > 0) setDisplayModeFor(ctx, vs.width, vs.height, player.videoFormat?.frameRate ?: 0f)
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                if (live) pinBestVideo(player)
+                quality = qualityOf(player)
+                nSubs = groups(C.TRACK_TYPE_TEXT).size
+                val a = groups(C.TRACK_TYPE_AUDIO); nAudio = a.size
+                a.firstOrNull { it.isSelected }?.let { audioLabel = langName(it.getTrackFormat(0).language) }
+                groups(C.TRACK_TYPE_TEXT).firstOrNull { it.isSelected }?.let { subLabel = langName(it.getTrackFormat(0).language) }
+            }
+
+            override fun onPlayerError(e: PlaybackException) {
+                if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) { player.seekToDefaultPosition(); player.prepare(); return }
+                val dec = e.errorCode in listOf(
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+                    PlaybackException.ERROR_CODE_DECODING_FAILED, PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+                    PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                )
+                val parse = e.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED || e.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED || e.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED
+                val http = e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
+                val limited = http?.responseCode == 429 || http?.responseCode == 509
+                val max = if (live) 8 else if (limited) 7 else 4
+                lastErr = ((e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.let { "HTTP " + it.responseCode } ?: e.errorCodeName.removePrefix("ERROR_CODE_"))
+                if (dec && live && player.trackSelectionParameters.overrides.keys.any { it.type == C.TRACK_TYPE_VIDEO } && retries < 2) {
+                    retries++
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+                    scope.launch { delay(400); load(url, 0L) }
+                    return
                 }
-                MediaPlayer.Event.Paused -> main.post { playing = false }
-                MediaPlayer.Event.Vout -> main.post {
-                    // NÃO trocar o modo HDMI aqui: com o motor VLC isso apagava o vídeo do 4K (ficava só áudio).
-                    // A TV cuida da saída; o vídeo renderiza normal.
-                    quality = qualityOf(mp)
-                }
-                MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESDeleted -> main.post {
-                    nSubs = spuTracks().size
-                    val a = audioTracks(); nAudio = a.size
-                    val curA = try { mp.audioTrack } catch (e: Throwable) { -1 }
-                    a.indexOfFirst { it.id == curA }.takeIf { it >= 0 }?.let { audioLabel = trackName(a[it].name, it + 1) }
-                }
-                MediaPlayer.Event.EndReached -> main.post {
-                    if (live) { retries = 0; load(url, 0L) } else st.onEnded(req)
-                }
-                MediaPlayer.Event.EncounteredError -> main.post {
-                    val max = if (live) 8 else 5
-                    if (retries < max) {
-                        retries++
-                        val at = if (live) 0L else mp.time
-                        scope.launch {
-                            delay(if (retries < 3) 1000L else 2500L)
-                            // canal ao vivo .ts falhando: tenta a versão HLS (.m3u8) do mesmo canal
-                            if (live && retries == 3 && url.contains("/live/") && url.endsWith(".ts")) url = url.removeSuffix(".ts") + ".m3u8"
-                            load(url, at)
+                if (!dec && retries < max) {
+                    retries++
+                    val at = if (live) 0L else player.currentPosition
+                    scope.launch {
+                        val ra = http?.headerFields?.entries?.firstOrNull { it.key.equals("Retry-After", true) }?.value?.firstOrNull()?.trim()?.toLongOrNull()
+                        // servidor limitando (429): espera de verdade (ele pede, ou 4 s, 8 s, 12 s…), senão só piora
+                        delay(if (limited) maxOf((ra ?: 0L) * 1000L, 4000L * retries).coerceAtMost(20_000L) else if (parse) 2500L * retries.coerceAtMost(4) else if (retries < 3) 800L else 2000L)
+                        // o servidor respondeu algo que o player não reconhece como vídeo: alterna o formato
+                        // (força HLS no endereço → troca .ts/.m3u8 → volta ao original) em vez de repetir o mesmo pedido
+                        if (live && parse) {
+                            val swap = { u: String -> if (u.endsWith(".ts")) u.removeSuffix(".ts") + ".m3u8" else if (u.endsWith(".m3u8")) u.removeSuffix(".m3u8") + ".ts" else u }
+                            when (retries) {
+                                1 -> hlsForce[0] = !url.lowercase().contains(".m3u8")
+                                2 -> { hlsForce[0] = false; url = swap(url) }
+                                3 -> { hlsForce[0] = false; url = swap(url) }
+                                else -> hlsForce[0] = false
+                            }
                         }
-                    } else {
-                        err = "Não foi possível reproduzir. Pode ser limite de conexões do servidor (feche o vídeo em outros aparelhos e espere 1 min), formato que o aparelho não decodifica (4K/H.265) ou o item estar fora do ar."
-                        ui = true
+                        // canal ao vivo .ts falhando: tenta a versão HLS (.m3u8) do mesmo canal
+                        if (live && retries == 3 && url.contains("/live/") && url.endsWith(".ts")) url = url.removeSuffix(".ts") + ".m3u8"
+                        load(url, at)
                     }
+                    return
                 }
+                err = if (dec) "Este aparelho não consegue decodificar este vídeo (comum em 4K / H.265). Tente a versão Full HD/HD ou abra em outro player."
+                else if (lastErr.contains("429") || lastErr.contains("509")) "O servidor da lista limitou as conexões (" + lastErr + "). Feche o vídeo em outros aparelhos, espere 1 minuto e tente de novo."
+                else "Não foi possível reproduzir (" + lastErr + "). O servidor pode estar fora do ar para este item."
+                ui = true
             }
         }
-        mp.setEventListener(listener)
+        player.addListener(l)
         onDispose {
-            try { st.saveProg(req, mp.time, mp.length.coerceAtLeast(0)) } catch (e: Throwable) {}
+            st.saveProg(req, player.currentPosition, player.duration.coerceAtLeast(0))
             resetDisplayMode(ctx)
-            try { mp.setEventListener(null) } catch (e: Throwable) {}
-            try { mp.stop() } catch (e: Throwable) {}
-            try { mp.detachViews() } catch (e: Throwable) {}
-            try { mp.release() } catch (e: Throwable) {}
+            player.removeListener(l)
+            player.release()
         }
     }
 
-    // inicia a reprodução (atraso curto no VOD deixa a conexão anterior fechar: servidor de 1 tela responde 429)
-    LaunchedEffect(mp) {
-        if (!live) delay(700)
-        load(url, if (req.resume > 0) req.resume else 0L)
-    }
-
-    // aspecto: ajustar (mantém proporção) ou esticar (preenche a tela)
-    LaunchedEffect(resize, layoutW, layoutH, quality) {
-        try {
-            if (resize == 1 && layoutW > 0 && layoutH > 0) { mp.aspectRatio = "$layoutW:$layoutH"; mp.scale = 0f }
-            else { mp.aspectRatio = null; mp.scale = 0f }
-        } catch (e: Throwable) {}
-    }
-
-    // posição / progresso (VLC: lê o tempo direto do player)
-    LaunchedEffect(mp) {
+    // posição / progresso
+    LaunchedEffect(player) {
         var n = 0
         while (true) {
-            if (mp.isPlaying) { pos = mp.time; dur = mp.length.coerceAtLeast(0) }
+            pos = player.currentPosition; dur = player.duration.coerceAtLeast(0)
             delay(500)
-            if (++n % 10 == 0 && mp.isPlaying && !live) st.saveProg(req, mp.time, mp.length.coerceAtLeast(0))
+            if (++n % 10 == 0 && player.isPlaying && !live) st.saveProg(req, player.currentPosition, player.duration.coerceAtLeast(0))
         }
     }
     // esconde o painel sozinho
     LaunchedEffect(ui, lastAct, err, overlay) {
-        if (ui && err.isEmpty() && !overlay) { delay(5000); if (mp.isPlaying) ui = false }
+        if (ui && err.isEmpty() && !overlay) { delay(5000); if (player.isPlaying) ui = false }
     }
     // foco: painel aberto -> botão play; fechado -> tela
     LaunchedEffect(ui) {
@@ -328,14 +377,13 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
-            .onSizeChanged { layoutW = it.width; layoutH = it.height }
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 lastAct = System.currentTimeMillis()
                 when (e.key) {
                     Key.MediaPlayPause, Key.Spacebar -> { toggle(); show(); return@onPreviewKeyEvent true }
-                    Key.MediaPlay -> { mp.play(); return@onPreviewKeyEvent true }
-                    Key.MediaPause -> { mp.pause(); show(); return@onPreviewKeyEvent true }
+                    Key.MediaPlay -> { player.play(); return@onPreviewKeyEvent true }
+                    Key.MediaPause -> { player.pause(); show(); return@onPreviewKeyEvent true }
                     Key.MediaFastForward -> { seek(30_000); show(); return@onPreviewKeyEvent true }
                     Key.MediaRewind -> { seek(-30_000); show(); return@onPreviewKeyEvent true }
                     Key.ChannelUp, Key.PageUp, Key.MediaNext -> { zap(true); return@onPreviewKeyEvent true }
@@ -358,13 +406,17 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = {
-                (videoLayout.parent as? ViewGroup)?.removeView(videoLayout)
-                videoLayout.apply {
+            factory = { c ->
+                PlayerView(c).apply {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    useController = false
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     keepScreenOn = true
+                    isFocusable = false
+                    setShutterBackgroundColor(android.graphics.Color.BLACK)
                 }
-            }
+            },
+            update = { v -> v.player = player; v.resizeMode = when (resize) { 1 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM; 2 -> AspectRatioFrameLayout.RESIZE_MODE_FILL; else -> AspectRatioFrameLayout.RESIZE_MODE_FIT } }
         )
         if (live && guide) GuidePanel(st, req.item, epgNow) { guide = false }
         if (live && chans) ChannelsPanel(st, req.item) { chans = false }
@@ -374,7 +426,7 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
         if (buffering && err.isEmpty()) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(Modifier.size(40.dp), color = Pink, strokeWidth = 3.dp)
             Spacer(Modifier.height(8.dp))
-            Text(if (retries > 0) "Reconectando… ($retries)" else "Carregando…", color = Color.White, fontSize = 13.sp, modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+            Text(if (retries > 0) "Reconectando… ($retries)" + (if (lastErr.isNotEmpty()) " · $lastErr" else "") else "Carregando…", color = Color.White, fontSize = 13.sp, modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
         }
 
         if (ui) {
@@ -417,41 +469,30 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
             Column(
                 Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000), Color(0xFF000000)))).padding(start = 40.dp, end = 40.dp, top = 30.dp, bottom = 22.dp)
             ) {
-                if (!live && dur > 0) SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> mp.time = t.coerceIn(0, dur); pos = t }
+                if (!live && dur > 0) SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> player.seekTo(t.coerceIn(0, dur)); pos = t }
                 Spacer(Modifier.height(10.dp))
-                // barra enxuta: só voltar/canal · play · avançar/canal · Mais
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (live) TvButton("▲ Canal", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(false) }
                     else TvButton("⏪ 10s", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { seek(-10_000); show() }
                     TvButton(if (playing) "⏯" else "▶", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp), modifier = Modifier.focusRequester(playFocus)) { toggle(); show() }
                     if (live) TvButton("▼ Canal", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(true) }
-                    else TvButton("10s ⏩", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { seek(10_000); show() }
-                    TvButton(if (more) "⋯ Fechar" else "⋯ Mais", if (more) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { more = !more; show() }
-                }
-                // "Mais": legenda, áudio, velocidade, tela e o resto — fora do caminho, a um clique
-                if (more) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (!live) {
-                            TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) {
-                                speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }; mp.setRate(speed); show()
-                            }
-                            if (st.next(req) != null) TvButton("Próximo ⏭", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(true) }
-                        } else {
-                            TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { guide = true; chans = false; more = false }
-                            TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { chans = true; guide = false; more = false }
+                    else {
+                        TvButton("10s ⏩", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { seek(10_000); show() }
+                        TvButton("Velocidade " + (if (speed == 1f) "1x" else "${speed}x"), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) {
+                            speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.75f; else -> 1f }
+                            player.setPlaybackSpeed(speed); show()
                         }
-                        TvButton("⛶ Tela" + (if (resize == 1) ": Esticar" else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { resize = (resize + 1) % 2; show() }
-                        TvButton("Vídeo: " + when (decode) { 1 -> "HW"; 2 -> "SW"; else -> "Auto" }, if (decode != 1) Pink else PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) {
-                            decode = (decode + 1) % 3; st.store.decodeMode = decode
-                            st.toast("Decodificação: " + when (decode) { 1 -> "Hardware"; 2 -> "Software"; else -> "Automática" } + " — recarregando…")
-                            load(url, if (live) 0L else mp.time); show()
-                        }
-                        if (nSubs > 0) TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleSub(); show() }
-                        if (nAudio > 1) TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleAudio(); show() }
-                        TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { st.toggleFav(req.item.key) }
-                        TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { close() }
+                        if (st.next(req) != null) TvButton("Próximo ⏭", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { zap(true) }
                     }
+                    if (live) {
+                        TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { guide = true; chans = false }
+                        TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { chans = true; guide = false }
+                    }
+                    TvButton("⛶ Tela" + (if (resize != 0) ": " + (if (resize == 1) "Zoom" else "Esticar") else ""), PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { resize = (resize + 1) % 3; show() }
+                    if (nSubs > 0) TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleSub(); show() }
+                    if (nAudio > 1) TvButton("🔊 Áudio", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { cycleAudio(); show() }
+                    TvButton(if (st.favs.contains(req.item.key)) "★ Favorito" else "☆ Favorito", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { st.toggleFav(req.item.key) }
+                    TvButton("✕ Sair", PB, 10.sp, compact = true, shape = RoundedCornerShape(8.dp)) { close() }
                 }
                 if (live) Text("Dica: ▲/▼ no controle troca de canal com o painel fechado", color = Color(0x99FFFFFF), fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
             }
@@ -482,7 +523,7 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                         ctx.startActivity(Intent.createChooser(i, "Abrir com").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     } catch (x: Exception) { st.toast("Nenhum outro player instalado (instale o VLC pela Play Store).") }
                 }
-                TvButton("↻ Tentar de novo", Btn) { err = ""; retries = 0; load(url, if (live) 0L else mp.time) }
+                TvButton("↻ Tentar de novo", Btn) { err = ""; retries = 0; load(url, if (live) 0L else player.currentPosition) }
                 TvButton("‹ Voltar", Btn) { close() }
             }
         }
