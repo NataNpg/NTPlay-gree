@@ -794,9 +794,9 @@ fun Recom(st: AppState, lib: Library) {
     val cw = remember(ver, lib) { st.continueList() }
     val favs = remember(st.favs, lib) { st.favs.mapNotNull { lib.byKey[it] } }
     val favL = favs.filter { it.kind == 'l' }; val favM = favs.filter { it.kind == 'm' }; val favS = favs.filter { it.kind == 's' }
-    // destaque (banner): o que você está vendo + alguns filmes/séries das SUAS listas — sem busca externa
+    // destaque (banner): só séries das SUAS listas (sem filmes, sem busca externa)
     val heroList = remember(cw, lib) {
-        (cw.map { it.first } + lib.movies.take(12) + lib.series.take(8)).filter { it.kind != 'l' }.distinctBy { it.key }.take(8)
+        (cw.map { it.first } + lib.series).filter { it.kind == 's' }.distinctBy { it.key }.take(8)
     }
     val ls = rememberLazyListState()
     LazyColumn(Modifier.fillMaxSize().mouseScroll(ls), state = ls, contentPadding = PaddingValues(bottom = 20.dp)) {
@@ -815,8 +815,6 @@ fun Recom(st: AppState, lib: Library) {
         if (favL.isNotEmpty()) item { ShelfRow("★ Canais favoritos", favL.size, null) { items(favL, key = { it.key }) { it2 -> CardFor(st, it2, favL) } } }
         if (favM.isNotEmpty()) item { ShelfRow("★ Filmes favoritos", favM.size, null) { items(favM, key = { it.key }) { it2 -> CardFor(st, it2, favM) } } }
         if (favS.isNotEmpty()) item { ShelfRow("★ Séries favoritas", favS.size, null) { items(favS, key = { it.key }) { it2 -> CardFor(st, it2, favS) } } }
-        if (lib.movies.isNotEmpty()) item { ShelfRow("Filmes", lib.movies.size, { st.selectTab("FILMES") }) { items(lib.movies.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.movies) } } }
-        if (lib.series.isNotEmpty()) item { ShelfRow("Séries", lib.series.size, { st.selectTab("SÉRIES") }) { items(lib.series.take(if (st.lite) 15 else 30), key = { it.key }) { it2 -> CardFor(st, it2, lib.series) } } }
         if (favs.isEmpty() && cw.isEmpty()) item { Text("Dica: segure o botão OK em qualquer canal, filme ou série para adicionar aos favoritos.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
     }
 }

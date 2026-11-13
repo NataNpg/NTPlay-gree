@@ -147,7 +147,7 @@ class AppState(val ctx: Context) {
                 try {
                     val tB = System.currentTimeMillis()
                     l.sorted("m", l.movies, "novos"); l.sorted("s", l.series, "novos")
-                    l.kids; l.anime; l.sorted("a", l.anime, "novos"); l.animeCR; l.animeFN
+                    // Animes/Infantil não têm mais aba — não pré-processa (app mais leve)
                     Util.Diag.span("Ordenações (2º plano)", System.currentTimeMillis() - tB)
                 } catch (e: Throwable) { }
             }
