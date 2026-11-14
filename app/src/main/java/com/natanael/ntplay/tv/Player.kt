@@ -491,17 +491,17 @@ fun PlayerScreen(st: AppState, req: PlayReq) {
                     SeekBar(pos, dur, onActivity = { lastAct = System.currentTimeMillis() }) { t -> player.seekTo(t.coerceIn(0, dur)); pos = t }
                     Spacer(Modifier.height(12.dp))
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    // transporte na parte de baixo: anterior · play · próximo (episódio) — ou ▲/▼ canal no ao vivo
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.fillMaxWidth()) {
+                    // transporte CENTRALIZADO embaixo: anterior · play · próximo (episódio) — ou ▲/▼ canal no ao vivo
+                    Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (live) CircleBtn("▲", false) { zap(false) }
                         else if (st.prev(req) != null) CircleBtn("⏮", false) { zap(false) }
                         CircleBtn(if (playing) "⏸" else "▶", true, fr = playFocus) { toggle(); show() }
                         if (live) CircleBtn("▼", false) { zap(true) }
                         else if (st.next(req) != null) CircleBtn("⏭", false) { zap(true) }
                     }
-                    // chips secundários (o seek é só pela barra de tempo acima)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // chips secundários à direita (o seek é só pela barra de tempo acima)
+                    Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                         if (!more) {
                             if (live) { TvButton("Guia", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { guide = true; chans = false }; Spacer(Modifier.width(8.dp)); TvButton("Canais", PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { chans = true; guide = false }; Spacer(Modifier.width(8.dp)) }
                             if (nSubs > 0) { TvButton("CC " + subLabel, PB, 10.sp, compact = true, shape = RoundedCornerShape(10.dp)) { cycleSub(); show() }; Spacer(Modifier.width(8.dp)) }

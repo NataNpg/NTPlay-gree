@@ -794,6 +794,8 @@ fun Recom(st: AppState, lib: Library) {
     val cw = remember(ver, lib) { st.continueList() }
     val favs = remember(st.favs, lib) { st.favs.mapNotNull { lib.byKey[it] } }
     val favL = favs.filter { it.kind == 'l' }; val favM = favs.filter { it.kind == 'm' }; val favS = favs.filter { it.kind == 's' }
+    val gVer = st.groupsVer
+    val myGroups = remember(gVer, lib) { st.groupNames().mapNotNull { gn -> st.groupItems(gn).takeIf { it.isNotEmpty() }?.let { gn to it } } }
     val ls = rememberLazyListState()
     LazyColumn(Modifier.fillMaxSize().mouseScroll(ls), state = ls, contentPadding = PaddingValues(bottom = 20.dp)) {
         if (cw.isNotEmpty()) item {
@@ -807,6 +809,8 @@ fun Recom(st: AppState, lib: Library) {
                 }
             }
         }
+        // grupos criados pelo usuário (grupos personalizados), um por fileira
+        for ((gname, gitems) in myGroups) item { ShelfRow(gname, gitems.size, null) { items(gitems.take(if (st.lite) 20 else 40), key = { it.key }) { it2 -> CardFor(st, it2, gitems) } } }
         if (favL.isNotEmpty()) item { ShelfRow("★ Canais favoritos", favL.size, null) { items(favL, key = { it.key }) { it2 -> CardFor(st, it2, favL) } } }
         if (favM.isNotEmpty()) item { ShelfRow("★ Filmes favoritos", favM.size, null) { items(favM, key = { it.key }) { it2 -> CardFor(st, it2, favM) } } }
         if (favS.isNotEmpty()) item { ShelfRow("★ Séries favoritas", favS.size, null) { items(favS, key = { it.key }) { it2 -> CardFor(st, it2, favS) } } }
@@ -1306,13 +1310,13 @@ fun LoginGate(st: AppState) {
 /** QR code + telefone para pedir teste do aplicativo ou da lista. Usado na entrada e em ☰ Listas. */
 @Composable
 fun ContatoTeste(compact: Boolean = false) {
-    val wa = remember { Qr.bitmap("https://wa.me/5542920028569", 240).asImageBitmap() }
+    val wa = remember { Qr.bitmap("https://wa.me/5542998040495", 240).asImageBitmap() }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Image(wa, "QR code do WhatsApp", Modifier.size(if (compact) 62.dp else 78.dp).background(Color.White, RoundedCornerShape(8.dp)).padding(4.dp))
         Column {
             Text("Peça seu teste", color = Color.White, fontSize = if (compact) 11.sp else 12.sp, fontWeight = FontWeight.Bold)
             Text("do aplicativo ou da lista", color = Muted, fontSize = if (compact) 9.sp else 10.sp)
-            Text("(42) 92002-8569", color = Cyan, fontSize = if (compact) 12.sp else 13.sp, fontWeight = FontWeight.ExtraBold)
+            Text("(42) 998040495", color = Cyan, fontSize = if (compact) 12.sp else 13.sp, fontWeight = FontWeight.ExtraBold)
             Text("Aponte a câmera do celular", color = Muted, fontSize = 9.sp)
         }
     }
