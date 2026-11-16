@@ -75,6 +75,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -1210,10 +1216,22 @@ fun ListsDialog(st: AppState) {
 // ---------------------------------------------------------------- abertura
 @Composable
 fun Splash(st: AppState) {
+    // logo com animação de entrada (cresce + aparece) e uma leve pulsação contínua
+    val scale = remember { Animatable(0.68f) }
+    val fade = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { fade.animateTo(1f, tween(500)) }
+        scale.animateTo(1f, tween(650))
+    }
+    val inf = rememberInfiniteTransition(label = "splash")
+    val pulse by inf.animateFloat(1f, 1.05f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "pulse")
     Box(Modifier.fillMaxSize().background(Bg).focusable()) {
         Image(painterResource(R.drawable.splash), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Image(painterResource(R.drawable.logo), "NTPlay-gree",
+            Modifier.align(Alignment.Center).size(136.dp)
+                .graphicsLayer { val s = scale.value * pulse; scaleX = s; scaleY = s; alpha = fade.value })
         Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            androidx.compose.material3.CircularProgressIndicator(color = Cyan, strokeWidth = 3.dp, modifier = Modifier.size(26.dp))
+            androidx.compose.material3.CircularProgressIndicator(color = Pink, strokeWidth = 3.dp, modifier = Modifier.size(26.dp))
             Spacer(Modifier.height(8.dp))
             Text(if (st.busy) st.status else "Abrindo…", color = Color(0xCCFFFFFF), fontSize = 12.sp)
         }

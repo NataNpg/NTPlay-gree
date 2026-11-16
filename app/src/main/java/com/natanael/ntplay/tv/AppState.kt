@@ -695,9 +695,8 @@ class AppState(val ctx: Context) {
 
     // ------------------------------------------------------------ conta + sincronização na nuvem
     var syncUser by mutableStateOf(store.syncUser)
-    // NTPlay-one é standalone: sem conta/servidor obrigatório, o app abre direto. (Sync continua no código,
-    // dormente — só agiria se alguém entrasse com conta, o que esta versão não pede.)
-    var locked by mutableStateOf(false)
+    // Login/senha da nuvem (conta do projeto): o app abre travado até entrar, e volta a travar se a conta vencer.
+    var locked by mutableStateOf(store.syncUser.isEmpty() || (store.accessExp > 0 && System.currentTimeMillis() > store.accessExp))
     var accessMsg by mutableStateOf(if (store.syncUser.isNotEmpty() && store.accessExp > 0 && System.currentTimeMillis() > store.accessExp) "Seu acesso expirou. Conecte-se à internet e entre de novo ou peça a renovação." else "")
     /** dias que faltam para o acesso vencer (só quando faltam 7 dias ou menos) */
     fun expiryDays(): Int? {
